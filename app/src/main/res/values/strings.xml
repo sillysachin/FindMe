@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <string name="app_name">FindMe</string>
+    <string name="title_activity_find_me_maps">Find Me Map</string>
+
+</resources>
