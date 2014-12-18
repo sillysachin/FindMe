@@ -1,11 +1,16 @@
 package com.appbootup.findme;
 
 import android.content.Context;
+import android.content.Intent;
 import android.location.Criteria;
 import android.location.Location;
+import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Bundle;
 import android.support.v4.app.FragmentActivity;
+import android.util.Log;
+import android.view.Gravity;
+import android.widget.Toast;
 
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
@@ -13,21 +18,33 @@ import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.MarkerOptions;
 
-public class FindMeMapsActivity extends FragmentActivity {
+//import com.google.android.gms.location.LocationListener;
 
+public class FindMeMapsActivity extends FragmentActivity implements LocationListener {
+
+    // The minimum distance to change Updates in meters
+    private static final long MIN_DISTANCE_CHANGE_FOR_UPDATES = 10;
+    // The minimum time between updates in milliseconds
+    private static final long MIN_TIME_BW_UPDATES = 1000 * 60 * 5; // 5 minute
+    final String TAG = "com.appbootup.findme.FindMeMapsActivity";
+    boolean gpsEnabledFl = false;
+    boolean networkEnabledFl = false;
     private GoogleMap mMap; // Might be null if Google Play services APK is not available.
+    private LocationManager mLocationManager;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_find_me_maps);
         setUpMapIfNeeded();
+        setupLocationManager();
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         setUpMapIfNeeded();
+        setupLocationManager();
     }
 
     /**
@@ -65,39 +82,102 @@ public class FindMeMapsActivity extends FragmentActivity {
      * This should only be called once and when we are sure that {@link #mMap} is not null.
      */
     private void setUpMap() {
-        mMap.addMarker(new MarkerOptions().position(new LatLng(0, 0)).title("Marker"));
         // Enable MyLocation Layer of Google Map
         mMap.setMyLocationEnabled(true);
-
-        // Get LocationManager object from System Service LOCATION_SERVICE
-        LocationManager locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
-
-        // Create a criteria object to retrieve provider
-        Criteria criteria = new Criteria();
-
-        // Get the name of the best provider
-        String provider = locationManager.getBestProvider(criteria, true);
-
-        // Get Current Location
-        Location myLocation = locationManager.getLastKnownLocation(provider);
-
         // set map type
         mMap.setMapType(GoogleMap.MAP_TYPE_NORMAL);
-
-        // Get latitude of the current location
-        double latitude = myLocation.getLatitude();
-
-        // Get longitude of the current location
-        double longitude = myLocation.getLongitude();
-
-        // Create a LatLng object for the current location
-        LatLng latLng = new LatLng(latitude, longitude);
-
-        // Show the current location in Google Map
-        mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
-
         // Zoom in the Google Map
         mMap.animateCamera(CameraUpdateFactory.zoomTo(14));
+    }
+
+    private void setupLocationManager() {
+        if (mLocationManager == null) {
+            // Get LocationManager object from System Service LOCATION_SERVICE
+            mLocationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+
+            // Create a criteria object to retrieve provider
+            Criteria criteria = new Criteria();
+            criteria.setAccuracy(Criteria.ACCURACY_FINE);
+            criteria.setPowerRequirement(Criteria.POWER_LOW);
+
+            // Get the name of the best provider
+            String provider = mLocationManager.getBestProvider(criteria, true);
+            // Get Current Location
+            Location lastKnownLocation = mLocationManager.getLastKnownLocation(provider);
+            if (lastKnownLocation != null) {
+                showLocationOnMap(lastKnownLocation);
+            }
+            // exceptions will be thrown if provider is not permitted.
+            try {
+                gpsEnabledFl = mLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+
+            try {
+                networkEnabledFl = mLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            if (!gpsEnabledFl && !networkEnabledFl) {
+                showToast("LOCATION PROVIDER not found!");
+                this.startActivity(new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+                return;
+            }
+
+            // if gps is enabled, get location updates
+            if (gpsEnabledFl) {
+                Log.e(TAG, "gpsEnabledFl, requesting updates.");
+                mLocationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, MIN_TIME_BW_UPDATES,
+                        MIN_DISTANCE_CHANGE_FOR_UPDATES, this);
+            }
+
+            // if network is enabled, get location updates
+            if (networkEnabledFl) {
+                Log.e(TAG, "networkEnabledFl, requesting updates.");
+                mLocationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, MIN_TIME_BW_UPDATES,
+                        MIN_DISTANCE_CHANGE_FOR_UPDATES, this);
+            }
+        }
+    }
+
+    private void showToast(String message) {
+        Context context = getApplicationContext();
+        int duration = Toast.LENGTH_SHORT;
+        Toast toast = Toast.makeText(context, message, duration);
+        toast.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.CENTER_VERTICAL, 0, 0);
+        toast.show();
+    }
+
+    private void showLocationOnMap(Location location) {
+        // Get latitude of the current location
+        double latitude = location.getLatitude();
+        // Get longitude of the current location
+        double longitude = location.getLongitude();
+        // Create a LatLng object for the current location
+        LatLng latLng = new LatLng(latitude, longitude);
+        // Show the current location in Google Map
+        mMap.moveCamera(CameraUpdateFactory.newLatLng(latLng));
         mMap.addMarker(new MarkerOptions().position(new LatLng(latitude, longitude)).title("You are here!").snippet("Consider yourself located"));
+    }
+
+    @Override
+    public void onLocationChanged(Location location) {
+        showLocationOnMap(location);
+    }
+
+    @Override
+    public void onStatusChanged(String provider, int status, Bundle extras) {
+
+    }
+
+    @Override
+    public void onProviderEnabled(String provider) {
+
+    }
+
+    @Override
+    public void onProviderDisabled(String provider) {
+
     }
 }
