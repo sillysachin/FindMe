@@ -44,7 +44,7 @@ public class FindMeMapsActivity extends FragmentActivity implements LocationList
     boolean networkEnabledFl = false;
     private GoogleMap mMap; // Might be null if Google Play services APK is not available.
     private LocationManager mLocationManager;
-    private int cid, lac, psc, mcc, mnc, cellPadding;
+    private int cid, lac, psc, mcc, mnc;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -189,27 +189,11 @@ public class FindMeMapsActivity extends FragmentActivity implements LocationList
             }
         }
 
-    /*
-     * Check if the current cell is a UMTS (3G) cell. If a 3G cell the cell id
-     * padding will be 8 numbers, if not 4 numbers.
-     */
-        if (telephonyManager.getNetworkType() == TelephonyManager.NETWORK_TYPE_UMTS) {
-            cellPadding = 8;
-        } else {
-            cellPadding = 4;
-        }
-
-        String message = "CellID: "
-                + getPaddedHex(cid, cellPadding);
-        message = message + "\n" + "Lac: "
-                + getPaddedHex(lac, 4);
-        message = message + "\n" + "Mcc: "
-                + getPaddedInt(mcc, 3);
-        message = message + "\n" + "Mnc: "
-                + getPaddedInt(mnc, 2);
+        String message = "CellID: " + cid;
+        message = message + "\n" + "Lac: " + lac;
+        message = message + "\n" + "Mcc: " + mcc;
+        message = message + "\n" + "Mnc: " + mnc;
         showToast(message);
-
-        String strResult;
 
         /**
          * Seems that cid and lac shall be in hex. Cid should be padded with zero's
@@ -217,39 +201,10 @@ public class FindMeMapsActivity extends FragmentActivity implements LocationList
          * numbers. Mnc padded to 2 numbers.
          */
         try {
-            // Update the current location
             findLocationByCellInfo(cid, lac, mnc, mcc);
-            strResult = "Position updated!";
         } catch (IOException e) {
-            strResult = "Error!\n" + e.getMessage();
+            Log.e(TAG, "findLocationByCellInfo failed." + e);
         }
-        showToast(strResult);
-    }
-
-    /**
-     * Convert an int to an hex String and pad with 0's up to minLen.
-     */
-    String getPaddedHex(int nr, int minLen) {
-        String str = Integer.toHexString(nr);
-        if (str != null) {
-            while (str.length() < minLen) {
-                str = "0" + str;
-            }
-        }
-        return str;
-    }
-
-    /**
-     * Convert an int to String and pad with 0's up to minLen.
-     */
-    String getPaddedInt(int nr, int minLen) {
-        String str = Integer.toString(nr);
-        if (str != null) {
-            while (str.length() < minLen) {
-                str = "0" + str;
-            }
-        }
-        return str;
     }
 
     private void showToast(String message) {
