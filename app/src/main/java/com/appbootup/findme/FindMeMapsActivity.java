@@ -8,6 +8,8 @@ import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Bundle;
 import android.support.v4.app.FragmentActivity;
+import android.telephony.TelephonyManager;
+import android.telephony.gsm.GsmCellLocation;
 import android.util.Log;
 import android.view.Gravity;
 import android.widget.Toast;
@@ -17,8 +19,18 @@ import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.gson.FieldNamingPolicy;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.internal.bind.DateTypeAdapter;
+import com.squareup.otto.Subscribe;
 
-//import com.google.android.gms.location.LocationListener;
+import java.io.IOException;
+import java.util.Date;
+
+import retrofit.RequestInterceptor;
+import retrofit.RestAdapter;
+import retrofit.converter.GsonConverter;
 
 public class FindMeMapsActivity extends FragmentActivity implements LocationListener {
 
@@ -26,25 +38,37 @@ public class FindMeMapsActivity extends FragmentActivity implements LocationList
     private static final long MIN_DISTANCE_CHANGE_FOR_UPDATES = 10;
     // The minimum time between updates in milliseconds
     private static final long MIN_TIME_BW_UPDATES = 1000 * 60 * 5; // 5 minute
+    private final static String API_KEY = "722bb384-578f-417d-bf12-0b36050862dd";
     final String TAG = "com.appbootup.findme.FindMeMapsActivity";
     boolean gpsEnabledFl = false;
     boolean networkEnabledFl = false;
     private GoogleMap mMap; // Might be null if Google Play services APK is not available.
     private LocationManager mLocationManager;
+    private int cid, lac, psc, mcc, mnc, cellPadding;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_find_me_maps);
+        setUpTelephonyManager();
         setUpMapIfNeeded();
         setupLocationManager();
+        Application.getEventBus().register(this);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        setUpTelephonyManager();
         setUpMapIfNeeded();
         setupLocationManager();
+        Application.getEventBus().register(this);
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        Application.getEventBus().unregister(this);
     }
 
     /**
@@ -91,6 +115,7 @@ public class FindMeMapsActivity extends FragmentActivity implements LocationList
     }
 
     private void setupLocationManager() {
+
         if (mLocationManager == null) {
             // Get LocationManager object from System Service LOCATION_SERVICE
             mLocationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
@@ -111,13 +136,13 @@ public class FindMeMapsActivity extends FragmentActivity implements LocationList
             try {
                 gpsEnabledFl = mLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER);
             } catch (Exception e) {
-                e.printStackTrace();
+                Log.e(TAG, "GPS_PROVIDER", e);
             }
 
             try {
                 networkEnabledFl = mLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER);
             } catch (Exception e) {
-                e.printStackTrace();
+                Log.e(TAG, "NETWORK_PROVIDER", e);
             }
             if (!gpsEnabledFl && !networkEnabledFl) {
                 showToast("LOCATION PROVIDER not found!");
@@ -127,18 +152,104 @@ public class FindMeMapsActivity extends FragmentActivity implements LocationList
 
             // if gps is enabled, get location updates
             if (gpsEnabledFl) {
-                Log.e(TAG, "gpsEnabledFl, requesting updates.");
+                Log.e(TAG, "GPS Enabled, requesting updates.");
                 mLocationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, MIN_TIME_BW_UPDATES,
                         MIN_DISTANCE_CHANGE_FOR_UPDATES, this);
             }
 
             // if network is enabled, get location updates
             if (networkEnabledFl) {
-                Log.e(TAG, "networkEnabledFl, requesting updates.");
+                Log.e(TAG, "Network Enabled, requesting updates.");
                 mLocationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, MIN_TIME_BW_UPDATES,
                         MIN_DISTANCE_CHANGE_FOR_UPDATES, this);
             }
         }
+    }
+
+    private void setUpTelephonyManager() {
+        //CID, MNC, MCC, LAC ==>  http://opencellid.org/ or http://www.cell2gps.com
+        TelephonyManager telephonyManager = (TelephonyManager) getSystemService(Context.TELEPHONY_SERVICE);
+        GsmCellLocation cellLocation = (GsmCellLocation) telephonyManager.getCellLocation();
+        cid = cellLocation.getCid();
+        lac = cellLocation.getLac();
+        psc = cellLocation.getPsc();
+
+        Log.e(TAG, "cid = " + cid + ",lac = " + lac + ",psc = " + psc);
+
+        /*
+        * Mcc and mnc is concatenated in the networkOperatorString. The first 3
+        * chars is the mcc and the last 2 is the mnc.
+        */
+        String networkOperator = telephonyManager.getNetworkOperator();
+        if (networkOperator != null && networkOperator.length() > 0) {
+            try {
+                int mcc = Integer.parseInt(networkOperator.substring(0, 3));
+                int mnc = Integer.parseInt(networkOperator.substring(3));
+            } catch (NumberFormatException e) {
+            }
+        }
+
+    /*
+     * Check if the current cell is a UMTS (3G) cell. If a 3G cell the cell id
+     * padding will be 8 numbers, if not 4 numbers.
+     */
+        if (telephonyManager.getNetworkType() == TelephonyManager.NETWORK_TYPE_UMTS) {
+            cellPadding = 8;
+        } else {
+            cellPadding = 4;
+        }
+
+        String message = "CellID: "
+                + getPaddedHex(cid, cellPadding);
+        message = message + "\n" + "Lac: "
+                + getPaddedHex(lac, 4);
+        message = message + "\n" + "Mcc: "
+                + getPaddedInt(mcc, 3);
+        message = message + "\n" + "Mnc: "
+                + getPaddedInt(mnc, 2);
+        showToast(message);
+
+        String strResult;
+
+        /**
+         * Seems that cid and lac shall be in hex. Cid should be padded with zero's
+         * to 8 numbers if UMTS (3G) cell, otherwise to 4 numbers. Mcc padded to 3
+         * numbers. Mnc padded to 2 numbers.
+         */
+        try {
+            // Update the current location
+            findLocationByCellInfo(cid, lac, mnc, mcc);
+            strResult = "Position updated!";
+        } catch (IOException e) {
+            strResult = "Error!\n" + e.getMessage();
+        }
+        showToast(strResult);
+    }
+
+    /**
+     * Convert an int to an hex String and pad with 0's up to minLen.
+     */
+    String getPaddedHex(int nr, int minLen) {
+        String str = Integer.toHexString(nr);
+        if (str != null) {
+            while (str.length() < minLen) {
+                str = "0" + str;
+            }
+        }
+        return str;
+    }
+
+    /**
+     * Convert an int to String and pad with 0's up to minLen.
+     */
+    String getPaddedInt(int nr, int minLen) {
+        String str = Integer.toString(nr);
+        if (str != null) {
+            while (str.length() < minLen) {
+                str = "0" + str;
+            }
+        }
+        return str;
     }
 
     private void showToast(String message) {
@@ -168,16 +279,72 @@ public class FindMeMapsActivity extends FragmentActivity implements LocationList
 
     @Override
     public void onStatusChanged(String provider, int status, Bundle extras) {
-
+        Log.e(TAG, provider + " onStatusChanged - " + status);
     }
 
     @Override
     public void onProviderEnabled(String provider) {
-
+        Log.e(TAG, "onProviderEnabled - " + provider);
     }
 
     @Override
     public void onProviderDisabled(String provider) {
+        Log.e(TAG, "onProviderDisabled - " + provider);
+    }
 
+    private void findLocationByCellInfo(int cid, int lac, int mnc, int mcc)
+            throws IOException {
+        try {
+
+            String sampleUrl = "http://opencellid.org/cell/get?key=" + API_KEY + "&mcc=" + mcc + "&mnc=" + mnc + "&lac=" +
+                    lac + "&cellid=" + cid + "&format=json";
+            String baseUrl = "http://opencellid.org";
+            Log.d(TAG, "Fetched : " + sampleUrl);
+
+            RequestInterceptor requestInterceptor = new RequestInterceptor() {
+                @Override
+                public void intercept(RequestFacade request) {
+                    request.addHeader("User-Agent", "Retrofit-OpenCellIdService");
+                }
+            };
+
+            Gson gson = new GsonBuilder()
+                    .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+                    .registerTypeAdapter(Date.class, new DateTypeAdapter())
+                    .create();
+
+            RestAdapter openCellIdServiceRestAdapter = new RestAdapter.Builder()
+                    .setEndpoint(baseUrl)
+                    .setRequestInterceptor(requestInterceptor)
+                    .setConverter(new GsonConverter(gson))
+                    .build();
+
+            OpenCellIdService openCellIdService = openCellIdServiceRestAdapter.create(OpenCellIdService.class);
+
+
+            new OpenCellIdRestService()
+                    .fetch(openCellIdService, baseUrl,
+                            cid, lac, mnc, mcc);
+
+
+            // OpenCell openCell = openCellIdService.getCell(API_KEY, mcc, mnc, lac, cid, "json");
+            // onOpenCells(openCell);
+
+        } catch (Exception e) {
+            Log.e(TAG, "Incorrect Location processing.", e);
+        }
+    }
+
+    @Subscribe
+    public void onOpenCells(OpenCell openCell) {
+        String message = "Longitude: "
+                + openCell.getLon();
+        message = message + "\n" + "Latitude: "
+                + openCell.getLat();
+        message = message + "\n" + "Name: "
+                + openCell.getNid();
+        message = message + "\n" + "Accuracy: "
+                + openCell.getAverageSignalStrength();
+        showToast(message);
     }
 }
